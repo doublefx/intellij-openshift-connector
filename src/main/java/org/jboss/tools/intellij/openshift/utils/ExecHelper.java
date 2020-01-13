@@ -16,6 +16,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
+import com.intellij.util.net.HttpConfigurable;
 import com.jediterm.terminal.ProcessTtyConnector;
 import com.jediterm.terminal.TtyConnector;
 import org.apache.commons.exec.CommandLine;
@@ -38,10 +39,13 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import static com.intellij.openapi.util.text.StringUtil.isNotEmpty;
 import static org.jboss.tools.intellij.openshift.Constants.HOME_FOLDER;
 
 public class ExecHelper {
@@ -72,11 +76,32 @@ public class ExecHelper {
     executor.setWorkingDirectory(workingDirectory);
     CommandLine command = new CommandLine(executable).addArguments(arguments);
     try {
-      executor.execute(command);
+      executor.execute(command, withIdeProxyEnvironmentVariables());
       return writer.toString();
     } catch (IOException e) {
       throw new IOException(e.getLocalizedMessage() + " " + writer.toString(), e);
     }
+  }
+
+  private static boolean isValidProxy(HttpConfigurable proxySettings) {
+    return proxySettings.USE_HTTP_PROXY && isNotEmpty(proxySettings.PROXY_HOST);
+  }
+
+  private static Map<String, String> withIdeProxyEnvironmentVariables() {
+    final HashMap<String, String> environment = new HashMap<>();
+    final HttpConfigurable ideHttpProxySettings = HttpConfigurable.getInstance();
+
+    if (isValidProxy(ideHttpProxySettings)) {
+      final StringBuilder proxyUrlBuilder = new StringBuilder(ideHttpProxySettings.PROXY_HOST + ":" + ideHttpProxySettings.PROXY_PORT);
+      if (ideHttpProxySettings.PROXY_AUTHENTICATION && ideHttpProxySettings.getProxyLogin() != null && ideHttpProxySettings.getPlainProxyPassword() != null) {
+        proxyUrlBuilder.insert(0, ideHttpProxySettings.getProxyLogin() + ":" + ideHttpProxySettings.getPlainProxyPassword() + "@");
+      }
+
+      environment.put("HTTP_PROXY", proxyUrlBuilder.insert(0, "http://").toString());
+      environment.put("NO_PROXY", ideHttpProxySettings.PROXY_EXCEPTIONS);
+    }
+
+    return environment;
   }
 
   public static String execute(String executable, String... arguments) throws IOException {
